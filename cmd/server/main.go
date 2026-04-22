@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -37,6 +38,23 @@ func getEnvInt(key string, fallback int) int {
 		return n
 	}
 	return fallback
+}
+
+// redactURL replaces any embedded password in a URL's user-info with "***".
+// Used to avoid logging Redis passwords for managed deployments.
+// Returns the original string unchanged if the URL has no user-info or
+// fails to parse.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	if _, hasPass := u.User.Password(); !hasPass {
+		return raw
+	}
+	// Build the userinfo string directly without encoding.
+	userinfo := u.User.Username() + ":***"
+	return u.Scheme + "://" + userinfo + "@" + u.Host + u.Path
 }
 
 func main() {
@@ -180,7 +198,7 @@ func main() {
 		if err != nil {
 			log.Printf("  Redis:     disabled (connect failed: %v)", err)
 		} else {
-			log.Printf("  Redis:     enabled (url=%s, positive=%s, negative=%s)", redisURL, positiveTTL, negativeTTL)
+			log.Printf("  Redis:     enabled (url=%s, positive=%s, negative=%s)", redactURL(redisURL), positiveTTL, negativeTTL)
 			postTextProvider = cachedProvider
 			defer func() { _ = cachedProvider.Close() }()
 		}
