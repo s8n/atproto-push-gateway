@@ -113,9 +113,14 @@ func (p *CachedProvider) PostText(ctx context.Context, uri string) (string, bool
 		}
 	}
 
-	// Singleflight-dedup the miss path.
-	v, _, _ := p.group.Do(uri, func() (any, error) {
-		text, hasEmbed, found, fetchErr := p.fetcher.Fetch(ctx, uri)
+	// Singleflight-dedup the miss path. Use DoChan + per-waiter ctx select
+	// so a caller cancelling their ctx doesn't fail the shared fetch for
+	// other waiters. The fetch itself runs under a detached context so it
+	// keeps going even after all waiters time out — the result still
+	// populates Redis for the next caller.
+	ch := p.group.DoChan(uri, func() (any, error) {
+		fetchCtx := context.Background()
+		text, hasEmbed, found, fetchErr := p.fetcher.Fetch(fetchCtx, uri)
 		if fetchErr != nil {
 			log.Printf("[posttext] fetch error for %s: %v", uri, fetchErr)
 			// Transient — don't cache.
@@ -130,28 +135,38 @@ func (p *CachedProvider) PostText(ctx context.Context, uri string) (string, bool
 		} else {
 			value, ttl = negativeValue, p.cfg.NegativeTTL
 		}
-		if setErr := p.client.Set(ctx, key, value, ttl).Err(); setErr != nil {
+		if setErr := p.client.Set(fetchCtx, key, value, ttl).Err(); setErr != nil {
 			log.Printf("[posttext] redis set error for %s: %v", uri, setErr)
 		}
 		return fetchResult{text: text, hasEmbed: hasEmbed, ok: found}, nil
 	})
-
-	r := v.(fetchResult)
-	return r.text, r.hasEmbed, r.ok
+	select {
+	case res := <-ch:
+		r := res.Val.(fetchResult)
+		return r.text, r.hasEmbed, r.ok
+	case <-ctx.Done():
+		return "", false, false
+	}
 }
 
 // fetchWithoutCache bypasses Redis entirely. Used when Redis is unreachable.
 // Still singleflight-dedups so concurrent misses during a Redis outage don't
 // hammer AppView.
 func (p *CachedProvider) fetchWithoutCache(ctx context.Context, uri string) (string, bool, bool) {
-	v, _, _ := p.group.Do(uri, func() (any, error) {
-		text, hasEmbed, found, err := p.fetcher.Fetch(ctx, uri)
+	ch := p.group.DoChan(uri, func() (any, error) {
+		fetchCtx := context.Background()
+		text, hasEmbed, found, err := p.fetcher.Fetch(fetchCtx, uri)
 		if err != nil {
 			log.Printf("[posttext] fetch error (redis down) for %s: %v", uri, err)
 			return fetchResult{}, nil
 		}
 		return fetchResult{text: text, hasEmbed: hasEmbed, ok: found}, nil
 	})
-	r := v.(fetchResult)
-	return r.text, r.hasEmbed, r.ok
+	select {
+	case res := <-ch:
+		r := res.Val.(fetchResult)
+		return r.text, r.hasEmbed, r.ok
+	case <-ctx.Done():
+		return "", false, false
+	}
 }

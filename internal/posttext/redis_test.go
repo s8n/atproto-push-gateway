@@ -291,3 +291,62 @@ func TestNewFailsWhenRedisUnreachable(t *testing.T) {
 		}
 	}
 }
+
+func TestCachedProviderLeaderCancellationDoesNotFailWaiters(t *testing.T) {
+	// When 2 callers race into the same URI, and the leader cancels their
+	// ctx mid-fetch, the other waiter's fetch — under its own uncancelled
+	// ctx — should still complete successfully.
+	stub := &stubFetcher{text: "result", found: true, delay: 150 * time.Millisecond}
+	p, _ := newTestProvider(t, stub)
+
+	uri := "at://did:plc:alice/app.bsky.feed.post/sharedfetch"
+
+	var leaderOK, waiterOK bool
+	var leaderText, waiterText string
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Leader: cancels after 50ms, well before the fetch completes.
+	go func() {
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		leaderText, _, leaderOK = p.PostText(ctx, uri)
+	}()
+
+	// Give the leader a head start so singleflight sees it first.
+	time.Sleep(5 * time.Millisecond)
+
+	// Waiter: has a generous deadline, should survive leader cancellation.
+	go func() {
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		waiterText, _, waiterOK = p.PostText(ctx, uri)
+	}()
+
+	wg.Wait()
+
+	// Leader should have failed (cancelled before fetch completed).
+	if leaderOK {
+		t.Errorf("leader ok=true, want false (ctx cancelled before fetch completed)")
+	}
+	if leaderText != "" {
+		t.Errorf("leader text = %q, want empty on cancellation", leaderText)
+	}
+
+	// Waiter should have succeeded — its ctx was never cancelled, and the
+	// shared fetch ran to completion on its detached context.
+	if !waiterOK {
+		t.Errorf("waiter ok=false, want true (its ctx was never cancelled)")
+	}
+	if waiterText != "result" {
+		t.Errorf("waiter text = %q, want %q", waiterText, "result")
+	}
+
+	// The fetcher was called exactly once (singleflight dedup) regardless
+	// of the leader's cancellation.
+	if got := stub.calls.Load(); got != 1 {
+		t.Errorf("fetcher called %d times, want 1", got)
+	}
+}
