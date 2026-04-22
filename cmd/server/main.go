@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/dracoblue/atproto-push-gateway/internal/jetstream"
+	"github.com/dracoblue/atproto-push-gateway/internal/posttext"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
@@ -21,6 +23,18 @@ import (
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			log.Printf("invalid %s=%q (not an integer), using default %d", key, v, fallback)
+			return fallback
+		}
+		return n
 	}
 	return fallback
 }
@@ -101,10 +115,10 @@ func main() {
 		if apnsSender != nil {
 			sender.APNs = apnsSender
 			env := "production"
-		if apnsSandbox {
-			env = "sandbox"
-		}
-		log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s, env=%s)", apnsKeyID, apnsTeamID, apnsTopic, env)
+			if apnsSandbox {
+				env = "sandbox"
+			}
+			log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s, env=%s)", apnsKeyID, apnsTeamID, apnsTopic, env)
 		} else {
 			log.Printf("  APNs:      disabled (no key configured)")
 		}
@@ -142,8 +156,40 @@ func main() {
 	// Initialize profile resolver for display names
 	profileResolver := profile.NewResolver()
 
+	// Initialize subject-post text provider. If REDIS_URL is empty or the
+	// startup ping fails, fall back to NullProvider — like/repost bodies
+	// stay empty (today's behavior), but nothing else breaks.
+	redisURL := getEnv("REDIS_URL", "redis://redis:6379/0")
+	positiveTTL := time.Duration(getEnvInt("REDIS_POST_TTL_SECONDS", 86400)) * time.Second
+	negativeTTL := time.Duration(getEnvInt("REDIS_POST_NEGATIVE_TTL_SECONDS", 300)) * time.Second
+	fetchTimeout := time.Duration(getEnvInt("POST_FETCH_TIMEOUT_SECONDS", 2)) * time.Second
+
+	var postTextProvider posttext.PostTextProvider = posttext.NullProvider{}
+	if redisURL != "" {
+		fetcher := &posttext.AppViewFetcher{
+			Client: &http.Client{Timeout: fetchTimeout},
+		}
+		cfg := posttext.Config{
+			URL:         redisURL,
+			PositiveTTL: positiveTTL,
+			NegativeTTL: negativeTTL,
+		}
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cachedProvider, err := posttext.New(pingCtx, cfg, fetcher)
+		pingCancel()
+		if err != nil {
+			log.Printf("  Redis:     disabled (connect failed: %v)", err)
+		} else {
+			log.Printf("  Redis:     enabled (url=%s, positive=%s, negative=%s)", redisURL, positiveTTL, negativeTTL)
+			postTextProvider = cachedProvider
+			defer func() { _ = cachedProvider.Close() }()
+		}
+	} else {
+		log.Printf("  Redis:     disabled (REDIS_URL empty)")
+	}
+
 	// Initialize Jetstream consumer
-	consumer := jetstream.NewConsumer(jetstreamURL, s, sender, profileResolver)
+	consumer := jetstream.NewConsumer(jetstreamURL, s, sender, profileResolver, postTextProvider, fetchTimeout)
 	go consumer.Run()
 
 	// Initialize HTTP server
