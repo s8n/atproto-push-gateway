@@ -199,6 +199,7 @@ func TestFormatAdversarialInputNeverExceedsBudget(t *testing.T) {
 		strings.Repeat(`\`, 5000),    // every byte escapes to \\ (2x)
 		strings.Repeat("\n", 5000),   // every byte escapes to \n (2x)
 		strings.Repeat("\x01", 5000), // every byte escapes to  (6x)
+		strings.Repeat("", 5000),    // 2-byte UTF-8 rune that json escapes to  (6 bytes)
 	}
 	// Simulate the consumer's throwaway marshal. Data map carries a representative
 	// set of fields that the real sendNotification populates.
@@ -232,6 +233,42 @@ func TestFormatAdversarialInputNeverExceedsBudget(t *testing.T) {
 		}
 		if len(final) > payloadBudget-safetyMargin {
 			t.Errorf("final payload %d > budget %d for input %q...", len(final), payloadBudget-safetyMargin, input[:20])
+		}
+	}
+
+	// Adversarial display-name guard: ensure the budget invariant also holds
+	// when the title source is long and/or escape-heavy. Today Bluesky caps
+	// displayName at 640 chars and handle is shorter, so the invariant holds
+	// with real inputs — but if those limits ever change, or if anyone adds
+	// escape-heavy title sources, this tripwire fires.
+	adversarialNames := []string{
+		strings.Repeat("A", 640), // longest realistic displayName
+		strings.Repeat(`"`, 640), // worst-case escape expansion within cap
+		strings.Repeat(`\`, 640), // worst-case escape expansion within cap
+		strings.Repeat("", 640),  // multi-byte + escape-heavy
+	}
+	for _, name := range adversarialNames {
+		n := push.Notification{
+			Token:    "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+			Platform: "ios",
+			Data:     data,
+		}
+		baseline, err := json.Marshal(n)
+		if err != nil {
+			t.Fatalf("marshal failed: %v", err)
+		}
+		baseOverhead := len(baseline)
+
+		title, body := Format("reply", name, "alice.bsky.social", "normal reply text", false, baseOverhead)
+		n.Title = title
+		n.Body = body
+		final, err := json.Marshal(n)
+		if err != nil {
+			t.Fatalf("final marshal failed: %v", err)
+		}
+		if len(final) > payloadBudget-safetyMargin {
+			t.Errorf("final payload %d > budget %d for displayName of length %d (first 20: %q...)",
+				len(final), payloadBudget-safetyMargin, len(name), name[:min(20, len(name))])
 		}
 	}
 }
