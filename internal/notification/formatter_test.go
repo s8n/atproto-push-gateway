@@ -108,11 +108,7 @@ func TestFormatBodyNonEnrichedReasonsAlwaysZWSP(t *testing.T) {
 	cases := []struct {
 		name, reason string
 	}{
-		{"like", "like"},
-		{"repost", "repost"},
 		{"follow", "follow"},
-		{"like-via-repost", "like-via-repost"},
-		{"repost-via-repost", "repost-via-repost"},
 		{"verified", "verified"},
 		{"unverified", "unverified"},
 	}
@@ -122,6 +118,28 @@ func TestFormatBodyNonEnrichedReasonsAlwaysZWSP(t *testing.T) {
 			_, body := Format(tc.reason, "Alice", "alice.bsky.social", "ignored", true, 0)
 			if body != "​" {
 				t.Errorf("body = %q, want ZWSP", body)
+			}
+		})
+	}
+}
+
+func TestFormatBodyEnrichesLikeRepostFamily(t *testing.T) {
+	cases := []struct {
+		name, reason, text string
+		hasEmbed           bool
+		wantBody           string
+	}{
+		{"like with text", "like", "Great post!", false, "Great post!"},
+		{"like with embed", "like", "Check this", true, "Check this 🖼"},
+		{"repost with text", "repost", "Shared this.", false, "Shared this."},
+		{"like-via-repost", "like-via-repost", "Via repost", false, "Via repost"},
+		{"repost-via-repost", "repost-via-repost", "Chain share", false, "Chain share"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, body := Format(tc.reason, "Alice", "alice.bsky.social", tc.text, tc.hasEmbed, 0)
+			if body != tc.wantBody {
+				t.Errorf("body = %q, want %q", body, tc.wantBody)
 			}
 		})
 	}

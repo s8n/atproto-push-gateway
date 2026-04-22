@@ -108,7 +108,7 @@ type dispatchItem struct {
 type Consumer struct {
 	url             string
 	store           *store.Store
-	sender          *push.MultiSender
+	sender          push.Sender
 	profileResolver *profile.Resolver
 	postText        posttext.PostTextProvider
 	fetchTimeout    time.Duration
@@ -151,7 +151,7 @@ func (c *Consumer) GetStats() Stats {
 func NewConsumer(
 	url string,
 	s *store.Store,
-	sender *push.MultiSender,
+	sender push.Sender,
 	profileResolver *profile.Resolver,
 	postText posttext.PostTextProvider,
 	fetchTimeout time.Duration,

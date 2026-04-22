@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
 
@@ -466,5 +467,67 @@ func TestHandleLikeZeroFetchTimeoutUsesDefault(t *testing.T) {
 	}
 	if prov.sawExpiredCtx {
 		t.Errorf("provider saw an already-expired context; zero fetchTimeout must fall back to the default")
+	}
+}
+
+// captureSender records all notifications sent to it.
+type captureSender struct {
+	mu   sync.Mutex
+	sent []push.Notification
+}
+
+func (c *captureSender) Send(n push.Notification) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sent = append(c.sent, n)
+	return nil
+}
+
+func TestHandleLikeEnrichesBodyWithSubjectPostText(t *testing.T) {
+	// End-to-end: handleLike runs provider → Format → sender.Send. The
+	// captured notification's Body must be the subject post's text (not
+	// ZWSP).
+	sender := &captureSender{}
+	fakeProv := &fakePostTextProvider{
+		text:     "this is the liked post",
+		hasEmbed: false,
+		ok:       true,
+	}
+	tmpStore, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer tmpStore.Close()
+
+	// Register a token for the target DID so sendNotification doesn't
+	// short-circuit on IsRegistered.
+	if err := tmpStore.RegisterToken("did:plc:target", "ios", "ExponentPushToken[xxxx]", "org.example"); err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
+
+	c := &Consumer{
+		store:        tmpStore,
+		sender:       sender,
+		postText:     fakeProv,
+		fetchTimeout: 1 * time.Second,
+	}
+
+	rawLike := json.RawMessage(`{
+		"$type": "app.bsky.feed.like",
+		"subject": {"uri": "at://did:plc:target/app.bsky.feed.post/xyz", "cid": "bafy"}
+	}`)
+	c.handleLike("did:plc:actor", "rk1", rawLike)
+
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.sent) != 1 {
+		t.Fatalf("sender received %d notifications, want 1", len(sender.sent))
+	}
+	n := sender.sent[0]
+	if n.Body != "this is the liked post" {
+		t.Errorf("Body = %q, want %q", n.Body, "this is the liked post")
+	}
+	if n.Title == "" {
+		t.Errorf("Title is empty")
 	}
 }

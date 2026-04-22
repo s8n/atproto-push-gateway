@@ -70,7 +70,8 @@ func renderTitle(reason, actorDisplayName, actorHandle string) string {
 
 func isEnrichedReason(reason string) bool {
 	switch reason {
-	case "reply", "mention", "quote":
+	case "reply", "mention", "quote",
+		"like", "repost", "like-via-repost", "repost-via-repost":
 		return true
 	}
 	return false

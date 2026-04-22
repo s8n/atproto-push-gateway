@@ -57,6 +57,27 @@ func redactURL(raw string) string {
 	return u.Scheme + "://" + userinfo + "@" + u.Host + u.Path
 }
 
+// scrubError replaces any occurrence of rawURL (or its password) in err's
+// message with a redacted form. Used to keep credentials out of logs even
+// when an error wraps the full URL.
+func scrubError(err error, rawURL string) string {
+	msg := err.Error()
+	if rawURL == "" {
+		return msg
+	}
+	redacted := redactURL(rawURL)
+	if redacted != rawURL {
+		msg = strings.ReplaceAll(msg, rawURL, redacted)
+	}
+	// Also scrub the bare password if present.
+	if u, perr := url.Parse(rawURL); perr == nil && u.User != nil {
+		if pass, ok := u.User.Password(); ok && pass != "" {
+			msg = strings.ReplaceAll(msg, pass, "***")
+		}
+	}
+	return msg
+}
+
 func main() {
 	port := getEnv("PUSH_GATEWAY_PORT", "8080")
 	serviceDID := getEnv("PUSH_GATEWAY_DID", "did:web:localhost")
@@ -196,7 +217,7 @@ func main() {
 		cachedProvider, err := posttext.New(pingCtx, cfg, fetcher)
 		pingCancel()
 		if err != nil {
-			log.Printf("  Redis:     disabled (connect failed: %v)", err)
+			log.Printf("  Redis:     disabled (url=%s, connect failed: %s)", redactURL(redisURL), scrubError(err, redisURL))
 		} else {
 			log.Printf("  Redis:     enabled (url=%s, positive=%s, negative=%s)", redactURL(redisURL), positiveTTL, negativeTTL)
 			postTextProvider = cachedProvider
