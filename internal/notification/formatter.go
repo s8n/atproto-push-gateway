@@ -5,8 +5,8 @@ package notification
 import "fmt"
 
 const (
-	zwsp         = "​"
-	embedMarker  = " 🖼"
+	zwsp        = "​"
+	embedMarker = " 🖼"
 )
 
 var titleTemplates = map[string]string{
