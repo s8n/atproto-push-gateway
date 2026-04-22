@@ -2,6 +2,12 @@
 
 This document describes which ATproto record types trigger push notifications, with example Jetstream events and resulting push payloads.
 
+## Title/Body Layout
+
+The gateway renders an actor-centric **title** ("Alice replied to your post") and, for reply/mention/quote reasons, places the triggering post's text in the **body**. Bodies are dynamically truncated so the final JSON payload stays within ~3.5 KB (well under the APNs/FCM 4 KB limit), with an ellipsis appended when truncated and a trailing 🖼 marker when the post carries a media embed (`app.bsky.embed.images`, `app.bsky.embed.video`, `app.bsky.embed.external`, or `app.bsky.embed.recordWithMedia`). Plain quote embeds (`app.bsky.embed.record` without media) do not earn a marker — the "quoted your post" title already conveys the relationship.
+
+Notifications that carry no post text (likes, reposts, follows, verified/unverified, and the `-via-repost` variants) use a single zero-width space (U+200B) as the body. This is invisible on screen and keeps iOS's Notification Service Extension path active, which gets finicky with truly empty bodies.
+
 ## Implemented
 
 ### like
@@ -35,10 +41,15 @@ This document describes which ATproto record types trigger push notifications, w
 ```json
 {
   "to": "<push-token>",
+  "title": "Alice liked your post",
+  "body": "​",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "like",
     "uri": "at://did:plc:alice/app.bsky.feed.like/3kco5r7xsgb2p",
     "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -79,10 +90,15 @@ This document describes which ATproto record types trigger push notifications, w
 ```json
 {
   "to": "<push-token>",
+  "title": "Alice reposted your post",
+  "body": "​",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "repost",
     "uri": "at://did:plc:alice/app.bsky.feed.repost/3kco5r8abc",
     "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -130,10 +146,15 @@ This document describes which ATproto record types trigger push notifications, w
 ```json
 {
   "to": "<push-token>",
+  "title": "Alice replied to your post",
+  "body": "Great post!",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "reply",
     "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5r9xyz",
     "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -178,9 +199,14 @@ This document describes which ATproto record types trigger push notifications, w
 ```json
 {
   "to": "<push-token>",
+  "title": "Alice mentioned you",
+  "body": "Hey @bob check this out",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "mention",
     "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5radef",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -227,10 +253,15 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 ```json
 {
   "to": "<push-token>",
+  "title": "Alice quoted your post",
+  "body": "This is so true!",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "quote",
     "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5rbghi",
     "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -268,9 +299,14 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 ```json
 {
   "to": "<push-token>",
+  "title": "Alice followed you",
+  "body": "​",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "follow",
     "uri": "at://did:plc:alice/app.bsky.graph.follow/3kco5rcjkl",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -317,10 +353,15 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 ```json
 {
   "to": "<push-token>",
+  "title": "Alice liked a post you reposted",
+  "body": "​",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "like-via-repost",
     "uri": "at://did:plc:alice/app.bsky.feed.like/3l3qo2vuowo2b",
     "subject": "at://did:plc:bob/app.bsky.feed.post/postid123",
+    "recipientDid": "did:plc:carol",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -367,10 +408,15 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 ```json
 {
   "to": "<push-token>",
+  "title": "Dave reposted a post you reposted",
+  "body": "​",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "repost-via-repost",
     "uri": "at://did:plc:dave/app.bsky.feed.repost/3l3qo2vuxyz2c",
     "subject": "at://did:plc:bob/app.bsky.feed.post/postid123",
+    "recipientDid": "did:plc:carol",
     "actorDid": "did:plc:dave",
     "actorDisplayName": "Dave",
     "actorHandle": "dave.bsky.social"
@@ -410,9 +456,14 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 ```json
 {
   "to": "<push-token>",
+  "title": "Your account has been verified",
+  "body": "​",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "verified",
     "uri": "at://did:plc:verifier-authority/app.bsky.graph.verification/3l3qo2vvvvv2c",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:verifier-authority",
     "actorDisplayName": "Bluesky Verification",
     "actorHandle": "verification.bsky.app"
@@ -447,9 +498,14 @@ Note: The gateway stores verification records (verifier + rkey → subject) in S
 ```json
 {
   "to": "<push-token>",
+  "title": "Your account verification was removed",
+  "body": "​",
+  "sound": "default",
+  "mutableContent": true,
   "data": {
     "reason": "unverified",
     "uri": "at://did:plc:verifier-authority/app.bsky.graph.verification/3l3qo2vvvvv2c",
+    "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:verifier-authority",
     "actorDisplayName": "Bluesky Verification",
     "actorHandle": "verification.bsky.app"

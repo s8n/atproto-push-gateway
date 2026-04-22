@@ -33,18 +33,20 @@ The gateway:
 
 ## Supported Events
 
-| Event | Default Title | Default Body |
+| Event | Title | Body |
 |---|---|---|
-| Like | New like | X liked your post |
-| Repost | New repost | X reposted your post |
-| Reply | New reply | X replied to your post |
-| Mention | New mention | X mentioned you |
-| Quote | New quote | X quoted your post |
-| Follow | New follower | X followed you |
-| Like via repost | New like | X liked a post you reposted |
-| Repost via repost | New repost | X reposted a post you reposted |
-| Verified | Verified | Your account has been verified |
-| Unverified | Verification removed | Your account verification was removed |
+| Like | X liked your post | *(empty)* |
+| Repost | X reposted your post | *(empty)* |
+| Reply | X replied to your post | post text (+ 🖼 if media attached) |
+| Mention | X mentioned you | post text (+ 🖼 if media attached) |
+| Quote | X quoted your post | post text (+ 🖼 if media attached) |
+| Follow | X followed you | *(empty)* |
+| Like via repost | X liked a post you reposted | *(empty)* |
+| Repost via repost | X reposted a post you reposted | *(empty)* |
+| Verified | Your account has been verified | *(empty)* |
+| Unverified | Your account verification was removed | *(empty)* |
+
+Reply/mention/quote bodies carry the actual post text, dynamically truncated with an ellipsis if the push payload would exceed ~3.5 KB. An embed marker (🖼) is appended when the post carries images, video, an external link card, or a record-with-media embed. Notifications without body text use a single zero-width space (U+200B) as the body — invisible on screen, keeps the iOS Notification Service Extension path active.
 
 ### Push Payload
 
@@ -53,13 +55,13 @@ The gateway sends English `title` and `body` as defaults, plus structured `data`
 ```json
 {
   "to": "ExponentPushToken[...]",
-  "title": "New like",
-  "body": "Alice liked your post",
+  "title": "Alice replied to your post",
+  "body": "That's a really interesting point about 🤔",
   "sound": "default",
   "mutableContent": true,
   "data": {
-    "reason": "like",
-    "uri": "at://did:plc:alice/app.bsky.feed.like/3kco5r7x",
+    "reason": "reply",
+    "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5r9xyz",
     "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
     "recipientDid": "did:plc:bob",
     "actorDid": "did:plc:alice",
