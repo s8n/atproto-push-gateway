@@ -1,6 +1,10 @@
 package notification
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestFormatTitlesKnownReasons(t *testing.T) {
 	cases := []struct {
@@ -127,5 +131,112 @@ func TestFormatBodyWhitespacePassThrough(t *testing.T) {
 	_, body := Format("reply", "Alice", "alice.bsky.social", text, false, 0)
 	if body != text {
 		t.Errorf("body = %q, want %q (whitespace must pass through)", body, text)
+	}
+}
+
+func TestFormatTruncatesLongText(t *testing.T) {
+	text := strings.Repeat("a", 5000)
+	_, body := Format("reply", "Alice", "alice.bsky.social", text, false, 0)
+	if !strings.HasSuffix(body, "…") {
+		t.Errorf("long body should end with ellipsis, got last rune in %q", body)
+	}
+	if len(body) >= len(text) {
+		t.Errorf("body should be shorter than input, got %d >= %d", len(body), len(text))
+	}
+}
+
+func TestFormatTruncatesKeepsEmbedMarker(t *testing.T) {
+	text := strings.Repeat("a", 5000)
+	_, body := Format("reply", "Alice", "alice.bsky.social", text, true, 0)
+	if !strings.HasSuffix(body, " 🖼") {
+		t.Errorf("body with embed must end with embed marker, got tail %q", body[max(0, len(body)-20):])
+	}
+	if !strings.Contains(body, "…") {
+		t.Errorf("truncated body should contain ellipsis, got %q", body[max(0, len(body)-20):])
+	}
+}
+
+func TestFormatShortTextNotTruncated(t *testing.T) {
+	_, body := Format("reply", "Alice", "alice.bsky.social", "short", false, 0)
+	if body != "short" {
+		t.Errorf("short body should pass through, got %q", body)
+	}
+}
+
+func TestFormatUTF8BoundaryRespected(t *testing.T) {
+	// Japanese post: each char is 3 bytes UTF-8; truncation must not split one.
+	text := strings.Repeat("日", 2000) // 6000 bytes
+	_, body := Format("reply", "Alice", "alice.bsky.social", text, false, 0)
+	// Body (stripped of ellipsis if present) must be a multiple of 3 bytes
+	// since every char in input is 3 bytes.
+	trimmed := strings.TrimSuffix(body, "…")
+	for i, r := range trimmed {
+		if r == '�' {
+			t.Errorf("truncation split a UTF-8 codepoint at byte %d: %q", i, body)
+			break
+		}
+	}
+}
+
+func TestFormatAvailableZeroReturnsZWSP(t *testing.T) {
+	// Give Format an impossibly large baseOverhead. Body must fall to ZWSP
+	// rather than overflow or panic.
+	_, body := Format("reply", "Alice", "alice.bsky.social", "hello", false, 999999)
+	if body != "​" {
+		t.Errorf("body under zero-budget should be ZWSP, got %q", body)
+	}
+}
+
+// This is the adversarial-input guard. It is the single most important test
+// in this package: it verifies that after Format returns, marshaling the
+// title+body pair cannot exceed the payload budget minus safety margin,
+// regardless of JSON escape expansion.
+func TestFormatAdversarialInputNeverExceedsBudget(t *testing.T) {
+	adversarial := []string{
+		strings.Repeat(`"`, 5000),    // every byte escapes to \" (2x)
+		strings.Repeat(`\`, 5000),    // every byte escapes to \\ (2x)
+		strings.Repeat("\n", 5000),   // every byte escapes to \n (2x)
+		strings.Repeat("\x01", 5000), // every byte escapes to  (6x)
+	}
+	// Simulate the consumer's throwaway marshal. Data map carries a representative
+	// set of fields that the real sendNotification populates.
+	data := map[string]string{
+		"reason":           "reply",
+		"uri":              "at://did:plc:abcdefghijklmnop/app.bsky.feed.post/3kco5r9xyz",
+		"subject":          "at://did:plc:qrstuvwxyz012345/app.bsky.feed.post/abc123",
+		"recipientDid":     "did:plc:qrstuvwxyz012345",
+		"actorDid":         "did:plc:abcdefghijklmnop",
+		"actorDisplayName": "Alice",
+		"actorHandle":      "alice.bsky.social",
+	}
+	type pushNotif struct {
+		Token    string            `json:"token"`
+		Platform string            `json:"platform"`
+		Title    string            `json:"title"`
+		Body     string            `json:"body"`
+		Data     map[string]string `json:"data,omitempty"`
+	}
+	for _, input := range adversarial {
+		n := pushNotif{
+			Token:    "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+			Platform: "ios",
+			Data:     data,
+		}
+		baseline, err := json.Marshal(n)
+		if err != nil {
+			t.Fatalf("marshal failed: %v", err)
+		}
+		baseOverhead := len(baseline)
+
+		title, body := Format("reply", "Alice", "alice.bsky.social", input, true, baseOverhead)
+		n.Title = title
+		n.Body = body
+		final, err := json.Marshal(n)
+		if err != nil {
+			t.Fatalf("final marshal failed: %v", err)
+		}
+		if len(final) > payloadBudget-safetyMargin {
+			t.Errorf("final payload %d > budget %d for input %q...", len(final), payloadBudget-safetyMargin, input[:20])
+		}
 	}
 }
