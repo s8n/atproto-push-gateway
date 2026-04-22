@@ -8,6 +8,8 @@ The gateway renders an actor-centric **title** ("Alice replied to your post") an
 
 Notifications that carry no post text (likes, reposts, follows, verified/unverified, and the `-via-repost` variants) use a single zero-width space (U+200B) as the body. This is invisible on screen and keeps iOS's Notification Service Extension path active, which gets finicky with truly empty bodies.
 
+Like/repost/like-via-repost/repost-via-repost bodies carry the *subject* post's text, not the liker/reposter's. This text is cached in Redis (key `posttext:v1:<at-uri>`, default TTL 24h). Cache misses trigger a single `app.bsky.feed.getPosts` call to the AppView; concurrent misses for the same post are deduplicated via a singleflight group. When Redis is disabled, unreachable, or the AppView fetch fails, these notifications fall back to a ZWSP body — the user sees the title ("Alice liked your post") but no preview.
+
 ## Implemented
 
 ### like
@@ -42,7 +44,7 @@ Notifications that carry no post text (likes, reposts, follows, verified/unverif
 {
   "to": "<push-token>",
   "title": "Alice liked your post",
-  "body": "​",
+  "body": "Great read, thanks for sharing!",
   "sound": "default",
   "mutableContent": true,
   "data": {
@@ -91,7 +93,7 @@ Notifications that carry no post text (likes, reposts, follows, verified/unverif
 {
   "to": "<push-token>",
   "title": "Alice reposted your post",
-  "body": "​",
+  "body": "This is so important right now.",
   "sound": "default",
   "mutableContent": true,
   "data": {
@@ -354,7 +356,7 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 {
   "to": "<push-token>",
   "title": "Alice liked a post you reposted",
-  "body": "​",
+  "body": "Friday thoughts from the team.",
   "sound": "default",
   "mutableContent": true,
   "data": {
@@ -409,7 +411,7 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 {
   "to": "<push-token>",
   "title": "Dave reposted a post you reposted",
-  "body": "​",
+  "body": "New blog post up: why Go scheduling matters.",
   "sound": "default",
   "mutableContent": true,
   "data": {

@@ -35,18 +35,18 @@ The gateway:
 
 | Event | Title | Body |
 |---|---|---|
-| Like | X liked your post | *(empty)* |
-| Repost | X reposted your post | *(empty)* |
+| Like | X liked your post | subject post text (+ 🖼 if media attached), empty if cache misses |
+| Repost | X reposted your post | subject post text (+ 🖼 if media attached), empty if cache misses |
 | Reply | X replied to your post | post text (+ 🖼 if media attached) |
 | Mention | X mentioned you | post text (+ 🖼 if media attached) |
 | Quote | X quoted your post | post text (+ 🖼 if media attached) |
 | Follow | X followed you | *(empty)* |
-| Like via repost | X liked a post you reposted | *(empty)* |
-| Repost via repost | X reposted a post you reposted | *(empty)* |
+| Like via repost | X liked a post you reposted | subject post text (+ 🖼 if media attached), empty if cache misses |
+| Repost via repost | X reposted a post you reposted | subject post text (+ 🖼 if media attached), empty if cache misses |
 | Verified | Your account has been verified | *(empty)* |
 | Unverified | Your account verification was removed | *(empty)* |
 
-Reply/mention/quote bodies carry the actual post text, dynamically truncated with an ellipsis if the push payload would exceed ~3.5 KB. An embed marker (🖼) is appended when the post carries images, video, an external link card, or a record-with-media embed. Notifications without body text use a single zero-width space (U+200B) as the body — invisible on screen, keeps the iOS Notification Service Extension path active.
+Reply/mention/quote bodies carry the triggering post's text directly from the Jetstream commit. Like/repost/like-via-repost/repost-via-repost bodies carry the *subject* post's text, resolved via a Redis-backed cache that falls back to the AppView's `app.bsky.feed.getPosts` on miss. All enriched bodies are dynamically truncated with an ellipsis if the push payload would exceed ~3.5 KB, and an embed marker (🖼) is appended when the post carries images, video, an external link card, or a record-with-media embed. Notifications without body text — including cache misses and transient AppView failures — use a single zero-width space (U+200B) as the body, keeping the iOS Notification Service Extension path active.
 
 ### Push Payload
 
@@ -186,6 +186,10 @@ docker run -d \
 | `APNS_SANDBOX` | (empty) | Set to `true` for APNs sandbox (dev/preview builds) |
 | `FCM_SERVICE_ACCOUNT_PATH` | (empty) | Path to Firebase service account JSON (for direct FCM delivery) |
 | `FCM_SERVICE_ACCOUNT_BASE64` | (empty) | Base64-encoded service account JSON (alternative to file path) |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection URL for the post-text cache. Set empty to disable (likes/reposts use empty bodies). |
+| `REDIS_POST_TTL_SECONDS` | `86400` | Positive cache TTL (24 hours). |
+| `REDIS_POST_NEGATIVE_TTL_SECONDS` | `300` | Negative cache TTL for deleted/unknown posts (5 minutes). |
+| `POST_FETCH_TIMEOUT_SECONDS` | `2` | Per-fetch AppView timeout. |
 
 ## Production Setup
 
@@ -235,7 +239,8 @@ The service must be reachable via HTTPS (required for DID document resolution an
 - **Event Source:** [Jetstream](https://github.com/bluesky-social/jetstream) with zstd compression
 - **Push Delivery:** Direct APNs (HTTP/2 + .p8), Direct FCM (v1 API + OAuth2), Expo Push API (fallback)
 - **In-Memory:** Hashmap of registered DIDs + block graph for fast matching
-- **Single process, single container, no external services**
+- **Redis:** Subject-post text cache for like/repost notifications (optional; falls back to empty bodies when unavailable)
+- **Single process, one optional sidecar (Redis via compose)**
 
 ### Why Not Use Bluesky's Push Service?
 
