@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/dracoblue/atproto-push-gateway/internal/notification"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
@@ -454,13 +455,13 @@ func (c *Consumer) handleLike(actorDID string, rkey string, record json.RawMessa
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.like/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI)
+	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI, "", false)
 
 	// like-via-repost: notify the reposter if discovered via their repost
 	if like.Via != nil {
 		reposterDID := extractDIDFromURI(like.Via.URI)
 		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI)
+			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI, "", false)
 		}
 	}
 }
@@ -477,13 +478,13 @@ func (c *Consumer) handleRepost(actorDID string, rkey string, record json.RawMes
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.repost/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI)
+	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI, "", false)
 
 	// repost-via-repost: notify the original reposter if discovered via their repost
 	if repost.Via != nil {
 		reposterDID := extractDIDFromURI(repost.Via.URI)
 		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI)
+			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI, "", false)
 		}
 	}
 }
@@ -495,28 +496,26 @@ func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessa
 	}
 
 	postURI := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", actorDID, rkey)
+	postText, hasEmbed := extractPostContent(&post)
 
-	// Reply
 	if post.Reply != nil {
 		targetDID := extractDIDFromURI(post.Reply.Parent.URI)
 		if targetDID != "" && targetDID != actorDID {
-			c.sendNotification(actorDID, targetDID, "reply", postURI, post.Reply.Parent.URI)
+			c.sendNotification(actorDID, targetDID, "reply", postURI, post.Reply.Parent.URI, postText, hasEmbed)
 		}
 	}
 
-	// Quote
 	if post.Embed != nil && post.Embed.Type == "app.bsky.embed.record" && post.Embed.Record != nil {
 		targetDID := extractDIDFromURI(post.Embed.Record.URI)
 		if targetDID != "" && targetDID != actorDID {
-			c.sendNotification(actorDID, targetDID, "quote", postURI, post.Embed.Record.URI)
+			c.sendNotification(actorDID, targetDID, "quote", postURI, post.Embed.Record.URI, postText, hasEmbed)
 		}
 	}
 
-	// Mentions
 	for _, facet := range post.Facets {
 		for _, feature := range facet.Features {
 			if feature.Type == "app.bsky.richtext.facet#mention" && feature.DID != "" && feature.DID != actorDID {
-				c.sendNotification(actorDID, feature.DID, "mention", postURI, "")
+				c.sendNotification(actorDID, feature.DID, "mention", postURI, "", postText, hasEmbed)
 			}
 		}
 	}
@@ -533,7 +532,7 @@ func (c *Consumer) handleFollow(actorDID string, rkey string, record json.RawMes
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.follow/%s", actorDID, rkey)
-	c.sendNotification(actorDID, follow.Subject, "follow", recordURI, "")
+	c.sendNotification(actorDID, follow.Subject, "follow", recordURI, "", "", false)
 }
 
 func (c *Consumer) handleBlockCreate(actorDID string, rkey string, record json.RawMessage) {
@@ -587,7 +586,7 @@ func (c *Consumer) handleVerificationCreate(verifierDID string, rkey string, rec
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.verification/%s", verifierDID, rkey)
-	c.sendNotification(verifierDID, verification.Subject, "verified", recordURI, "")
+	c.sendNotification(verifierDID, verification.Subject, "verified", recordURI, "", "", false)
 	log.Printf("[jetstream] verified: %s verified %s (rkey=%s)", verifierDID, verification.Subject, rkey)
 }
 
@@ -611,67 +610,11 @@ func (c *Consumer) handleVerificationDelete(verifierDID string, rkey string) {
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.verification/%s", verifierDID, rkey)
-	c.sendNotification(verifierDID, subjectDID, "unverified", recordURI, "")
+	c.sendNotification(verifierDID, subjectDID, "unverified", recordURI, "", "", false)
 	log.Printf("[jetstream] unverified: %s unverified %s (rkey=%s)", verifierDID, subjectDID, rkey)
 }
 
-// reasonTitles maps notification reasons to English titles.
-// Clients can use the data fields to format localized text instead.
-var reasonTitles = map[string]string{
-	"like":              "New like",
-	"repost":            "New repost",
-	"reply":             "New reply",
-	"mention":           "New mention",
-	"quote":             "New quote",
-	"follow":            "New follower",
-	"like-via-repost":   "New like",
-	"repost-via-repost": "New repost",
-	"verified":          "Verified",
-	"unverified":        "Verification removed",
-}
-
-// reasonBodyTemplates maps notification reasons to English body templates.
-// %s is replaced with the actor's display name or handle.
-var reasonBodyTemplates = map[string]string{
-	"like":              "%s liked your post",
-	"repost":            "%s reposted your post",
-	"reply":             "%s replied to your post",
-	"mention":           "%s mentioned you",
-	"quote":             "%s quoted your post",
-	"follow":            "%s followed you",
-	"like-via-repost":   "%s liked a post you reposted",
-	"repost-via-repost": "%s reposted a post you reposted",
-	"verified":          "Your account has been verified",
-	"unverified":        "Your account verification was removed",
-}
-
-func formatNotification(reason, actorDisplayName, actorHandle string) (string, string) {
-	title := reasonTitles[reason]
-	if title == "" {
-		title = "Notification"
-	}
-
-	actorName := actorDisplayName
-	if actorName == "" {
-		actorName = actorHandle
-	}
-	if actorName == "" {
-		actorName = "Someone"
-	}
-
-	template := reasonBodyTemplates[reason]
-	if template == "" {
-		return title, actorName
-	}
-
-	if reason == "verified" || reason == "unverified" {
-		return title, template
-	}
-
-	return title, fmt.Sprintf(template, actorName)
-}
-
-func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI string) {
+func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI, postText string, hasEmbed bool) {
 	if !c.store.IsRegistered(targetDID) {
 		return
 	}
@@ -689,32 +632,48 @@ func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subj
 
 	c.matchedEvents.Add(1)
 
-	// Resolve actorDID to display name + handle for client-side formatting
+	// Resolve actorDID to display name + handle for title rendering
 	actorDisplayName := ""
 	actorHandle := ""
 	if c.profileResolver != nil {
 		actorDisplayName, actorHandle = c.profileResolver.ResolveProfile(actorDID)
 	}
 
-	title, body := formatNotification(reason, actorDisplayName, actorHandle)
-
 	for _, token := range tokens {
+		data := map[string]string{
+			"reason":           reason,
+			"uri":              recordURI,
+			"recipientDid":     targetDID,
+			"actorDid":         actorDID,
+			"actorDisplayName": actorDisplayName,
+			"actorHandle":      actorHandle,
+		}
+		if subjectURI != "" {
+			data["subject"] = subjectURI
+		}
+
+		// Measure baseOverhead: the final push.Notification with Title and Body
+		// both empty, marshaled to JSON.
+		baseline := push.Notification{
+			Token:    token.PushToken,
+			Platform: token.Platform,
+			Data:     data,
+		}
+		baseOverhead := 2048 // conservative fallback if Marshal fails
+		if baselineJSON, err := json.Marshal(baseline); err == nil {
+			baseOverhead = len(baselineJSON)
+		} else {
+			log.Printf("[jetstream] warning: baseOverhead marshal failed: %v", err)
+		}
+
+		title, body := notification.Format(reason, actorDisplayName, actorHandle, postText, hasEmbed, baseOverhead)
+
 		n := push.Notification{
 			Token:    token.PushToken,
 			Platform: token.Platform,
 			Title:    title,
 			Body:     body,
-			Data: map[string]string{
-				"reason":           reason,
-				"uri":              recordURI,
-				"recipientDid":     targetDID,
-				"actorDid":         actorDID,
-				"actorDisplayName": actorDisplayName,
-				"actorHandle":      actorHandle,
-			},
-		}
-		if subjectURI != "" {
-			n.Data["subject"] = subjectURI
+			Data:     data,
 		}
 
 		if err := c.sender.Send(n); err != nil {
