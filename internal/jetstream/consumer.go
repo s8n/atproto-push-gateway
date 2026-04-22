@@ -630,6 +630,11 @@ func (c *Consumer) handleVerificationDelete(verifierDID string, rkey string) {
 	log.Printf("[jetstream] unverified: %s unverified %s (rkey=%s)", verifierDID, subjectDID, rkey)
 }
 
+// defaultFetchTimeout is used when Consumer.fetchTimeout is zero or negative.
+// Keeps a bogus zero-value from producing an immediately-expired context,
+// which would silently disable all subject-post enrichment.
+const defaultFetchTimeout = 2 * time.Second
+
 // fetchSubjectPost looks up the subject post's text and embed status via the
 // configured PostTextProvider. Returns ("", false) on miss or timeout —
 // the caller passes these to sendNotification which in turn causes Format
@@ -639,7 +644,11 @@ func (c *Consumer) fetchSubjectPost(uri string) (string, bool) {
 	if c.postText == nil {
 		return "", false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.fetchTimeout)
+	timeout := c.fetchTimeout
+	if timeout <= 0 {
+		timeout = defaultFetchTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	text, hasEmbed, ok := c.postText.PostText(ctx, uri)
 	if !ok {

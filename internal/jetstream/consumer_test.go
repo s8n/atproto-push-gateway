@@ -417,3 +417,54 @@ func TestHandleLikeWithViaFieldCallsProviderOnce(t *testing.T) {
 		t.Errorf("like-via-repost called provider %d times, want 1", len(fake.calls))
 	}
 }
+
+// ctxCheckingProvider records whether the context passed to PostText had
+// already expired by the time the provider saw it.
+type ctxCheckingProvider struct {
+	mu            sync.Mutex
+	sawExpiredCtx bool
+	callsObserved int
+}
+
+func (p *ctxCheckingProvider) PostText(ctx context.Context, uri string) (string, bool, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.callsObserved++
+	if ctx.Err() != nil {
+		p.sawExpiredCtx = true
+	}
+	return "text", false, true
+}
+
+func TestHandleLikeZeroFetchTimeoutUsesDefault(t *testing.T) {
+	// If fetchTimeout is 0 (uninitialized), fetchSubjectPost must NOT pass an
+	// already-expired context to the provider — that would silently break
+	// subject-post enrichment for callers who forgot to set the timeout.
+	prov := &ctxCheckingProvider{}
+	tmpStore, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer tmpStore.Close()
+
+	c := &Consumer{
+		store:        tmpStore,
+		postText:     prov,
+		fetchTimeout: 0, // the case we're defending against
+	}
+
+	rawLike := json.RawMessage(`{
+		"$type": "app.bsky.feed.like",
+		"subject": {"uri": "at://did:plc:target/app.bsky.feed.post/xyz", "cid": "bafy"}
+	}`)
+	c.handleLike("did:plc:actor", "rk1", rawLike)
+
+	prov.mu.Lock()
+	defer prov.mu.Unlock()
+	if prov.callsObserved == 0 {
+		t.Fatal("provider was never called")
+	}
+	if prov.sawExpiredCtx {
+		t.Errorf("provider saw an already-expired context; zero fetchTimeout must fall back to the default")
+	}
+}
