@@ -109,11 +109,11 @@ const (
 
 - `text` — proposed body (post text, whitespace preserved)
 - `hasEmbed` — whether to append the 🖼 marker
-- `overhead` — bytes consumed by everything else in the final push message: title, all `data` fields, token, JSON scaffolding, quotes, commas, keys. Computed once by the caller and passed in.
+- `baseOverhead` — bytes consumed by the final push message **with `Title` and `Body` both empty strings**: token, platform, all `data` fields, JSON scaffolding, quotes, commas, keys. Computed once by the caller and passed in. `Format` adds the title's own JSON-encoded length internally before computing remaining body budget.
 
 ### Overhead computation
 
-The caller (`consumer.go`) builds a throwaway `push.Notification` with `Body: ""` and all other final fields filled in, JSON-marshals it, measures `len(json)`, and passes that number to the truncator. The throwaway marshal already contains `"body":""` — the `"body":` key plus two empty quotes. When the real body is inserted, those empty quotes stay and only the encoded content between them changes. The `jsonEncodedLen(s)` helper subtracts 2 for the surrounding quotes so it reports exactly the delta vs. the empty-body baseline.
+The caller (`consumer.go`) builds a throwaway `push.Notification` with `Title: ""` **and** `Body: ""` and all other final fields filled in, JSON-marshals it, measures `len(json)`, and passes that number. The throwaway marshal already contains both `"title":""` and `"body":""` — the keys plus two empty quotes for each. When the real title and body are inserted, those empty quotes stay and only the encoded content between them changes. `Format` internally computes the title, JSON-encodes it to find its contribution to the payload, and subtracts that from the available body budget. The `jsonEncodedLen(s)` helper subtracts 2 for the surrounding quotes so it reports exactly the delta vs. the empty-field baseline.
 
 ### JSON escape awareness
 
@@ -122,7 +122,9 @@ The truncator compares the *JSON-encoded* length of the candidate body against `
 ### Algorithm
 
 ```
-available = payloadBudget - safetyMargin - overhead
+title = renderTitle(reason, actorDisplayName, actorHandle)
+titleContribution = jsonEncodedLen(title)
+available = payloadBudget - safetyMargin - baseOverhead - titleContribution
 
 candidate = text
 if hasEmbed:
@@ -150,7 +152,7 @@ loop:
         return zwsp
 ```
 
-Where `jsonEncodedLen(s)` is `len(x) - 2` with `x, _ := json.Marshal(s)` — the encoded form without its surrounding quotes (those two bytes are already counted in `overhead`'s `"body":""` segment).
+Where `jsonEncodedLen(s)` is `len(x) - 2` with `x, _ := json.Marshal(s)` — the encoded form without its surrounding quotes (those two bytes are already counted in `baseOverhead`'s `"title":""` / `"body":""` segments).
 
 ### UTF-8 boundary cut
 
@@ -182,15 +184,16 @@ internal/notification/
 
 ```go
 // Format renders the user-facing title and body for a notification.
-// Pure; no I/O. overhead is the byte size of everything else in the
-// final push payload (title, data fields, token, JSON scaffolding).
+// Pure; no I/O. baseOverhead is the byte size of the final push
+// payload with Title and Body both set to empty strings (caller
+// computes via json.Marshal of the throwaway notification).
 func Format(
     reason string,
     actorDisplayName string,
     actorHandle string,
     postText string,
     hasEmbed bool,
-    overhead int,
+    baseOverhead int,
 ) (title string, body string)
 ```
 
@@ -202,7 +205,7 @@ and the constants block above. Title templates live here as a package-level `map
 - `sendNotification` grows two parameters: `postText string, hasEmbed bool`.
 - `handlePost` extracts `post.Text` and the embed `$type` from the already-parsed `PostRecord` and passes them through for `reply`, `mention`, and `quote`. Quote's embed-type check excludes `app.bsky.embed.record` per the rule above.
 - `handleLike`, `handleRepost`, `handleFollow`, `handleVerificationCreate`, `handleVerificationDelete`, and the `-via-repost` paths pass `"", false`.
-- Before calling `notification.Format`, `sendNotification` builds a throwaway `push.Notification` with `Body: ""` and the final `Data` map, marshals it to measure `overhead`, then calls `Format`.
+- Before calling `notification.Format`, `sendNotification` builds a throwaway `push.Notification` with `Title: ""`, `Body: ""`, and the final `Token`, `Platform`, and `Data` map, marshals it to measure `baseOverhead`, then calls `Format`.
 
 ### No other changes
 
@@ -231,7 +234,7 @@ consumer.handlePost() parses PostRecord (already does this today)
 consumer.sendNotification(..., postText, hasEmbed)
     │
     ▼
-compute overhead (marshal push.Notification with Body="")
+compute baseOverhead (marshal push.Notification with Title="" Body="")
     │
     ▼
 notification.Format(reason, actor, postText, hasEmbed, overhead)
@@ -267,7 +270,7 @@ Almost nothing new — the feature is pure text manipulation over already-parsed
 - **Malformed `PostRecord`** — already handled by existing `json.Unmarshal` error path; function returns early, no notification sent. No change.
 - **Post text is empty string (`""`)** — treated as "no text available"; body falls to ZWSP. Same code path as like/follow.
 - **Invalid UTF-8 in post text** — should not happen (Jetstream guarantees valid UTF-8), but if it does, `utf8.DecodeLastRune` returns `RuneError` and the walk-back loop eventually reaches a valid boundary or cuts to empty. Worst case: ZWSP body. No panic.
-- **`json.Marshal` fails when computing overhead** — cannot happen for `push.Notification`'s shape (no chans/funcs/custom marshalers), but defensively: on marshal error, log at `[jetstream]` warning level and send the notification with `body = ZWSP` (skip enrichment). Preserves delivery.
+- **`json.Marshal` fails when computing baseOverhead** — cannot happen for `push.Notification`'s shape (no chans/funcs/custom marshalers), but defensively: on marshal error, log at `[jetstream]` warning level and call `Format` with a conservatively large `baseOverhead = 2048`. Result: body falls to ZWSP and notification still sends.
 - **Unknown reason** — title falls back to `"Notification"`, body to ZWSP. Never panics.
 
 No new logging categories. Existing `[jetstream]` / `[push]` logs cover this.
@@ -296,14 +299,18 @@ Unit tests only; the feature has no I/O surface.
 
 ### `internal/jetstream/consumer_test.go` (additions)
 
-- Reply with post text → captured `Notification.Body` equals the text (no truncation in test inputs).
-- Reply with post text + image embed → body ends with `" 🖼"`.
-- Reply with post text + `app.bsky.embed.record` only → body does **not** end with `" 🖼"`.
-- Mention with post text → body equals the text.
-- Quote with post text + image via `recordWithMedia` → body ends with `" 🖼"`.
-- Like → body equals `"​"`.
-- Follow → body equals `"​"`.
-- Title for reply includes actor display name (`"Alice replied to your post"`).
+The consumer's new responsibility is a pure helper: given a `*PostRecord`, return `(postText, hasEmbed)`. This helper is unit-testable without a `push.Sender` mock.
+
+- Reply post record with text → helper returns `(text, false)` when no embed.
+- Reply post record with `app.bsky.embed.images` → helper returns `(text, true)`.
+- Reply post record with `app.bsky.embed.video` → helper returns `(text, true)`.
+- Reply post record with `app.bsky.embed.external` → helper returns `(text, true)`.
+- Reply post record with `app.bsky.embed.recordWithMedia` → helper returns `(text, true)`.
+- Quote post record with `app.bsky.embed.record` only → helper returns `(text, false)` (plain record embed does not earn the marker).
+- Text-only post record → helper returns `(text, false)`.
+- Empty-text post record with an image embed → helper returns `("", true)` (caller will still fall through to ZWSP because postText is empty).
+
+Body-level assertions over the full consumer path require a mock `push.Sender`, which does not exist in the codebase today. Rather than introduce a test-only interface refactor, we rely on: (a) exhaustive `notification.Format` tests, and (b) the pure helper's tests above. The seam where these two meet — the single line in `sendNotification` that calls `Format` — is trivially inspectable.
 
 ### Verification gate
 
