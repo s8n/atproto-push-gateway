@@ -290,7 +290,7 @@ The PDS forwards `registerPush` calls with an inter-service JWT signed by the us
 
 ### Display Name Resolution
 
-Push notification bodies show display names ("Alice liked your post") instead of raw DIDs. Names are resolved via the public AppView API (`app.bsky.actor.getProfile`) and cached in memory (1 hour TTL, max 10,000 entries).
+Push notification titles show display names ("Alice liked your post") instead of raw DIDs. Names are resolved via the public AppView API (`app.bsky.actor.getProfile`) and cached in memory (1 hour TTL, max 10,000 entries).
 
 ## Block Handling
 
@@ -303,7 +303,7 @@ The gateway maintains a real-time block graph:
 
 ## Client-Side Localization
 
-The gateway sends English `title` and `body` as defaults. Clients can override these with localized text using the `data` fields before the notification is displayed.
+The gateway sends a fully-formed English `title` for every reason and, for reply/mention/quote, the triggering post's text as the `body`. For other reasons the body is a zero-width space. Clients can override the `title` with localized text using the `data` fields before the notification is displayed. **Do not replace the `body` for reply/mention/quote** — it carries user-generated post content, not a localized template.
 
 ### iOS: Notification Service Extension (NSE)
 
@@ -320,13 +320,24 @@ Example NSE logic (Swift):
 let reason = userInfo["reason"] as? String ?? ""
 let actor = userInfo["actorDisplayName"] as? String ?? "Someone"
 
+// Localize the title. The body for reply/mention/quote carries the
+// author's actual post text and should NOT be rewritten.
 switch reason {
 case "like":
-    bestAttempt.title = "Neuer Like"       // German
-    bestAttempt.body = "\(actor) hat deinen Beitrag geliked"
+    bestAttempt.title = "\(actor) hat deinen Beitrag geliked"  // German
+case "repost":
+    bestAttempt.title = "\(actor) hat deinen Beitrag geteilt"
 case "follow":
-    bestAttempt.title = "Neuer Follower"
-    bestAttempt.body = "\(actor) folgt dir jetzt"
+    bestAttempt.title = "\(actor) folgt dir jetzt"
+case "reply":
+    bestAttempt.title = "\(actor) hat dir geantwortet"
+    // keep body: carries the reply's post text
+case "mention":
+    bestAttempt.title = "\(actor) hat dich erwähnt"
+    // keep body: carries the mention's post text
+case "quote":
+    bestAttempt.title = "\(actor) hat deinen Beitrag zitiert"
+    // keep body: carries the quote's post text
 // ... other reasons
 default:
     break // keep English defaults from gateway
