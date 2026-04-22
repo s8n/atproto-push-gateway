@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/dracoblue/atproto-push-gateway/internal/push"
 )
 
 func TestFormatTitlesKnownReasons(t *testing.T) {
@@ -209,15 +211,8 @@ func TestFormatAdversarialInputNeverExceedsBudget(t *testing.T) {
 		"actorDisplayName": "Alice",
 		"actorHandle":      "alice.bsky.social",
 	}
-	type pushNotif struct {
-		Token    string            `json:"token"`
-		Platform string            `json:"platform"`
-		Title    string            `json:"title"`
-		Body     string            `json:"body"`
-		Data     map[string]string `json:"data,omitempty"`
-	}
 	for _, input := range adversarial {
-		n := pushNotif{
+		n := push.Notification{
 			Token:    "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
 			Platform: "ios",
 			Data:     data,
