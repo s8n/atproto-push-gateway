@@ -4,7 +4,10 @@ package notification
 
 import "fmt"
 
-const zwsp = "​"
+const (
+	zwsp         = "​"
+	embedMarker  = " 🖼"
+)
 
 var titleTemplates = map[string]string{
 	"like":              "%s liked your post",
@@ -25,7 +28,7 @@ var titleTemplates = map[string]string{
 // via json.Marshal of the throwaway push.Notification.
 func Format(reason, actorDisplayName, actorHandle, postText string, hasEmbed bool, baseOverhead int) (title, body string) {
 	title = renderTitle(reason, actorDisplayName, actorHandle)
-	body = zwsp
+	body = renderBody(reason, postText, hasEmbed)
 	return
 }
 
@@ -45,4 +48,22 @@ func renderTitle(reason, actorDisplayName, actorHandle string) string {
 		actor = "Someone"
 	}
 	return fmt.Sprintf(tmpl, actor)
+}
+
+func renderBody(reason, postText string, hasEmbed bool) string {
+	if !isEnrichedReason(reason) || postText == "" {
+		return zwsp
+	}
+	if hasEmbed {
+		return postText + embedMarker
+	}
+	return postText
+}
+
+func isEnrichedReason(reason string) bool {
+	switch reason {
+	case "reply", "mention", "quote":
+		return true
+	}
+	return false
 }

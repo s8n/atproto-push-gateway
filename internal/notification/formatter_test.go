@@ -55,10 +55,77 @@ func TestFormatUnknownReason(t *testing.T) {
 	}
 }
 
-func TestFormatBodyIsZWSPUntilEnrichmentLands(t *testing.T) {
-	// Task 2 replaces this with enrichment tests.
-	_, body := Format("reply", "Alice", "alice.bsky.social", "some text", false, 0)
-	if body != "​" {
-		t.Errorf("body = %q, want ZWSP", body)
+func TestFormatBodyEnrichesReplyMentionQuote(t *testing.T) {
+	cases := []struct {
+		name, reason, text string
+		hasEmbed           bool
+		wantBody           string
+	}{
+		{"reply with text", "reply", "Hello there", false, "Hello there"},
+		{"mention with text", "mention", "cc @alice", false, "cc @alice"},
+		{"quote with text", "quote", "lol", false, "lol"},
+		{"reply with embed", "reply", "check this", true, "check this 🖼"},
+		{"mention with embed", "mention", "see @bob", true, "see @bob 🖼"},
+		{"quote with embed", "quote", "lol", true, "lol 🖼"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, body := Format(tc.reason, "Alice", "alice.bsky.social", tc.text, tc.hasEmbed, 0)
+			if body != tc.wantBody {
+				t.Errorf("body = %q, want %q", body, tc.wantBody)
+			}
+		})
+	}
+}
+
+func TestFormatBodyEmptyTextFallsToZWSP(t *testing.T) {
+	cases := []struct {
+		name, reason string
+		hasEmbed     bool
+	}{
+		{"reply empty no embed", "reply", false},
+		{"reply empty with embed", "reply", true},
+		{"mention empty", "mention", false},
+		{"quote empty", "quote", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, body := Format(tc.reason, "Alice", "alice.bsky.social", "", tc.hasEmbed, 0)
+			if body != "​" {
+				t.Errorf("body = %q, want ZWSP", body)
+			}
+		})
+	}
+}
+
+func TestFormatBodyNonEnrichedReasonsAlwaysZWSP(t *testing.T) {
+	cases := []struct {
+		name, reason string
+	}{
+		{"like", "like"},
+		{"repost", "repost"},
+		{"follow", "follow"},
+		{"like-via-repost", "like-via-repost"},
+		{"repost-via-repost", "repost-via-repost"},
+		{"verified", "verified"},
+		{"unverified", "unverified"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Even with postText provided, these reasons must not enrich.
+			_, body := Format(tc.reason, "Alice", "alice.bsky.social", "ignored", true, 0)
+			if body != "​" {
+				t.Errorf("body = %q, want ZWSP", body)
+			}
+		})
+	}
+}
+
+func TestFormatBodyWhitespacePassThrough(t *testing.T) {
+	// Whitespace inside post text must be preserved byte-for-byte.
+	text := "line one\n\nline\ttwo   trailing"
+	_, body := Format("reply", "Alice", "alice.bsky.social", text, false, 0)
+	if body != text {
+		t.Errorf("body = %q, want %q (whitespace must pass through)", body, text)
 	}
 }
