@@ -1,3 +1,7 @@
 /server
 /.env
 coverage.out
+push-gateway.db
+.claude/
+ctdata/
+

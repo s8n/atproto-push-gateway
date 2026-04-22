@@ -2,16 +2,17 @@ services:
   push-gateway:
     build: .
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8181:8080"
     volumes:
-      - push-data:/data
+      - ./ctdata:/data
     environment:
-      - PUSH_GATEWAY_DID=did:web:push.example.org
+      - PUSH_GATEWAY_DID=${PUSH_GATEWAY_DID:-did:web:push.example.org}
       - PUSH_GATEWAY_PORT=8080
       - SQLITE_PATH=/data/push-gateway.db
-      - JETSTREAM_URL=wss://jetstream2.us-east.bsky.network/subscribe
-      - EXPO_PUSH_ACCESS_TOKEN=
+      - JETSTREAM_URL=${JETSTREAM_URL:-wss://jetstream2.us-east.bsky.network/subscribe}
+      - EXPO_PUSH_ACCESS_TOKEN=${EXPO_PUSH_ACCESS_TOKEN}
       - DEV_MODE=false
+      - FCM_SERVICE_ACCOUNT_PATH=${FCM_SERVICE_ACCOUNT_PATH}
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
@@ -33,5 +34,3 @@ services:
       timeout: 3s
       retries: 3
 
-volumes:
-  push-data:
