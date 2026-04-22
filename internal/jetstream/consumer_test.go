@@ -1,8 +1,13 @@
 package jetstream
 
 import (
+	"context"
 	"encoding/json"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
 
 func TestExtractDIDFromURI(t *testing.T) {
@@ -302,5 +307,113 @@ func TestExtractPostContent(t *testing.T) {
 				t.Errorf("hasEmbed = %v, want %v", hasEmbed, tc.wantHasEmbed)
 			}
 		})
+	}
+}
+
+// fakePostTextProvider records calls and returns canned results.
+type fakePostTextProvider struct {
+	mu       sync.Mutex
+	calls    []string
+	text     string
+	hasEmbed bool
+	ok       bool
+}
+
+func (f *fakePostTextProvider) PostText(ctx context.Context, uri string) (string, bool, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, uri)
+	return f.text, f.hasEmbed, f.ok
+}
+
+func TestHandleLikeCallsPostTextProvider(t *testing.T) {
+	// Build a minimal Consumer — we only need the postText field plus store,
+	// and we only exercise the code path up to sendNotification. sendNotification
+	// short-circuits when IsRegistered(targetDID) is false, which is the default
+	// for an empty store.
+	fake := &fakePostTextProvider{text: "hello", hasEmbed: false, ok: true}
+	tmpStore, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer tmpStore.Close()
+
+	c := &Consumer{
+		store:        tmpStore,
+		postText:     fake,
+		fetchTimeout: 1 * time.Second,
+	}
+
+	rawLike := json.RawMessage(`{
+		"$type": "app.bsky.feed.like",
+		"subject": {"uri": "at://did:plc:target/app.bsky.feed.post/xyz", "cid": "bafy"}
+	}`)
+	c.handleLike("did:plc:actor", "rk1", rawLike)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.calls) != 1 {
+		t.Fatalf("fake.calls = %v, want 1 call", fake.calls)
+	}
+	if fake.calls[0] != "at://did:plc:target/app.bsky.feed.post/xyz" {
+		t.Errorf("fake.calls[0] = %q, want subject URI", fake.calls[0])
+	}
+}
+
+func TestHandleRepostCallsPostTextProvider(t *testing.T) {
+	fake := &fakePostTextProvider{text: "rp", hasEmbed: true, ok: true}
+	tmpStore, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer tmpStore.Close()
+
+	c := &Consumer{
+		store:        tmpStore,
+		postText:     fake,
+		fetchTimeout: 1 * time.Second,
+	}
+
+	rawRepost := json.RawMessage(`{
+		"$type": "app.bsky.feed.repost",
+		"subject": {"uri": "at://did:plc:target/app.bsky.feed.post/xyz", "cid": "bafy"}
+	}`)
+	c.handleRepost("did:plc:actor", "rk1", rawRepost)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.calls) != 1 {
+		t.Fatalf("fake.calls = %v, want 1 call", fake.calls)
+	}
+}
+
+func TestHandleLikeWithViaFieldCallsProviderOnce(t *testing.T) {
+	// like-via-repost fires two notifications (like + like-via-repost), but
+	// they share the same subject URI, so the provider should only be
+	// consulted once.
+	fake := &fakePostTextProvider{text: "x", ok: true}
+	tmpStore, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer tmpStore.Close()
+
+	c := &Consumer{
+		store:        tmpStore,
+		postText:     fake,
+		fetchTimeout: 1 * time.Second,
+	}
+
+	rawLike := json.RawMessage(`{
+		"$type": "app.bsky.feed.like",
+		"subject": {"uri": "at://did:plc:target/app.bsky.feed.post/xyz", "cid": "bafy"},
+		"via": {"uri": "at://did:plc:reposter/app.bsky.feed.repost/rp1", "cid": "bafy2"}
+	}`)
+	c.handleLike("did:plc:actor", "rk1", rawLike)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.calls) != 1 {
+		t.Errorf("like-via-repost called provider %d times, want 1", len(fake.calls))
 	}
 }

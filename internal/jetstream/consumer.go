@@ -1,6 +1,7 @@
 package jetstream
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/dracoblue/atproto-push-gateway/internal/notification"
+	"github.com/dracoblue/atproto-push-gateway/internal/posttext"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
@@ -108,6 +110,8 @@ type Consumer struct {
 	store           *store.Store
 	sender          *push.MultiSender
 	profileResolver *profile.Resolver
+	postText        posttext.PostTextProvider
+	fetchTimeout    time.Duration
 	lastCursor      atomic.Int64
 	stopCh          chan struct{}
 	startCh         chan struct{} // closed when first token registered
@@ -144,17 +148,25 @@ func (c *Consumer) GetStats() Stats {
 	}
 }
 
-func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileResolver *profile.Resolver) *Consumer {
+func NewConsumer(
+	url string,
+	s *store.Store,
+	sender *push.MultiSender,
+	profileResolver *profile.Resolver,
+	postText posttext.PostTextProvider,
+	fetchTimeout time.Duration,
+) *Consumer {
 	c := &Consumer{
 		url:             url,
 		store:           s,
 		sender:          sender,
 		profileResolver: profileResolver,
+		postText:        postText,
+		fetchTimeout:    fetchTimeout,
 		stopCh:          make(chan struct{}),
 		startCh:         make(chan struct{}),
 		commitCh:        make(chan dispatchItem, 1024),
 	}
-	// If tokens already exist (from SQLite on restart), start immediately
 	if s.HasRegisteredDIDs() {
 		close(c.startCh)
 	}
@@ -454,14 +466,16 @@ func (c *Consumer) handleLike(actorDID string, rkey string, record json.RawMessa
 		return
 	}
 
+	postText, hasEmbed := c.fetchSubjectPost(like.Subject.URI)
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.like/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI, "", false)
+	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI, postText, hasEmbed)
 
-	// like-via-repost: notify the reposter if discovered via their repost
+	// like-via-repost: notify the reposter if discovered via their repost.
+	// Same subject post, so reuse the already-fetched text.
 	if like.Via != nil {
 		reposterDID := extractDIDFromURI(like.Via.URI)
 		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI, "", false)
+			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI, postText, hasEmbed)
 		}
 	}
 }
@@ -477,14 +491,16 @@ func (c *Consumer) handleRepost(actorDID string, rkey string, record json.RawMes
 		return
 	}
 
+	postText, hasEmbed := c.fetchSubjectPost(repost.Subject.URI)
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.repost/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI, "", false)
+	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI, postText, hasEmbed)
 
-	// repost-via-repost: notify the original reposter if discovered via their repost
+	// repost-via-repost: notify the original reposter.
+	// Same subject post, so reuse the already-fetched text.
 	if repost.Via != nil {
 		reposterDID := extractDIDFromURI(repost.Via.URI)
 		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI, "", false)
+			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI, postText, hasEmbed)
 		}
 	}
 }
@@ -612,6 +628,24 @@ func (c *Consumer) handleVerificationDelete(verifierDID string, rkey string) {
 	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.verification/%s", verifierDID, rkey)
 	c.sendNotification(verifierDID, subjectDID, "unverified", recordURI, "", "", false)
 	log.Printf("[jetstream] unverified: %s unverified %s (rkey=%s)", verifierDID, subjectDID, rkey)
+}
+
+// fetchSubjectPost looks up the subject post's text and embed status via the
+// configured PostTextProvider. Returns ("", false) on miss or timeout —
+// the caller passes these to sendNotification which in turn causes Format
+// to produce a ZWSP body. Uses a bounded context so a slow AppView can't
+// stall the dispatch worker indefinitely.
+func (c *Consumer) fetchSubjectPost(uri string) (string, bool) {
+	if c.postText == nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.fetchTimeout)
+	defer cancel()
+	text, hasEmbed, ok := c.postText.PostText(ctx, uri)
+	if !ok {
+		return "", false
+	}
+	return text, hasEmbed
 }
 
 func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI, postText string, hasEmbed bool) {
