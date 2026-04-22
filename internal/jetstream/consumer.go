@@ -30,10 +30,10 @@ const (
 )
 
 type Event struct {
-	DID        string          `json:"did"`
-	TimeUS     int64           `json:"time_us"`
-	Kind       string          `json:"kind"`
-	Commit     *CommitEvent    `json:"commit,omitempty"`
+	DID    string       `json:"did"`
+	TimeUS int64        `json:"time_us"`
+	Kind   string       `json:"kind"`
+	Commit *CommitEvent `json:"commit,omitempty"`
 }
 
 type CommitEvent struct {
@@ -418,6 +418,28 @@ func extractDIDFromURI(uri string) string {
 		return ""
 	}
 	return parts[0]
+}
+
+// extractPostContent returns the text and media-embed status of a parsed
+// feed post for use in notification enrichment. A "media embed" is one of
+// images, video, external, or recordWithMedia; a plain record embed (quote
+// without media) does not qualify.
+func extractPostContent(post *PostRecord) (text string, hasEmbed bool) {
+	if post == nil {
+		return "", false
+	}
+	text = post.Text
+	if post.Embed == nil {
+		return text, false
+	}
+	switch post.Embed.Type {
+	case "app.bsky.embed.images",
+		"app.bsky.embed.video",
+		"app.bsky.embed.external",
+		"app.bsky.embed.recordWithMedia":
+		hasEmbed = true
+	}
+	return text, hasEmbed
 }
 
 func (c *Consumer) handleLike(actorDID string, rkey string, record json.RawMessage) {

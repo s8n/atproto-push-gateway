@@ -237,3 +237,70 @@ func TestParseTextOnlyPost(t *testing.T) {
 		t.Errorf("expected 0 facets, got %d", len(post.Facets))
 	}
 }
+
+func TestExtractPostContent(t *testing.T) {
+	cases := []struct {
+		name         string
+		rawRecord    string
+		wantText     string
+		wantHasEmbed bool
+	}{
+		{
+			name:         "text only",
+			rawRecord:    `{"$type":"app.bsky.feed.post","text":"hello","createdAt":"2026-04-11T00:00:00Z"}`,
+			wantText:     "hello",
+			wantHasEmbed: false,
+		},
+		{
+			name:         "embed images",
+			rawRecord:    `{"$type":"app.bsky.feed.post","text":"look","embed":{"$type":"app.bsky.embed.images","images":[]},"createdAt":"2026-04-11T00:00:00Z"}`,
+			wantText:     "look",
+			wantHasEmbed: true,
+		},
+		{
+			name:         "embed video",
+			rawRecord:    `{"$type":"app.bsky.feed.post","text":"watch","embed":{"$type":"app.bsky.embed.video"},"createdAt":"2026-04-11T00:00:00Z"}`,
+			wantText:     "watch",
+			wantHasEmbed: true,
+		},
+		{
+			name:         "embed external",
+			rawRecord:    `{"$type":"app.bsky.feed.post","text":"click","embed":{"$type":"app.bsky.embed.external"},"createdAt":"2026-04-11T00:00:00Z"}`,
+			wantText:     "click",
+			wantHasEmbed: true,
+		},
+		{
+			name:         "embed recordWithMedia",
+			rawRecord:    `{"$type":"app.bsky.feed.post","text":"quote plus pic","embed":{"$type":"app.bsky.embed.recordWithMedia"},"createdAt":"2026-04-11T00:00:00Z"}`,
+			wantText:     "quote plus pic",
+			wantHasEmbed: true,
+		},
+		{
+			name:         "embed record only (plain quote)",
+			rawRecord:    `{"$type":"app.bsky.feed.post","text":"quote","embed":{"$type":"app.bsky.embed.record","record":{"uri":"at://did:plc:x/app.bsky.feed.post/abc","cid":"bafy"}},"createdAt":"2026-04-11T00:00:00Z"}`,
+			wantText:     "quote",
+			wantHasEmbed: false,
+		},
+		{
+			name:         "empty text with embed images",
+			rawRecord:    `{"$type":"app.bsky.feed.post","text":"","embed":{"$type":"app.bsky.embed.images"},"createdAt":"2026-04-11T00:00:00Z"}`,
+			wantText:     "",
+			wantHasEmbed: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var post PostRecord
+			if err := json.Unmarshal([]byte(tc.rawRecord), &post); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			text, hasEmbed := extractPostContent(&post)
+			if text != tc.wantText {
+				t.Errorf("text = %q, want %q", text, tc.wantText)
+			}
+			if hasEmbed != tc.wantHasEmbed {
+				t.Errorf("hasEmbed = %v, want %v", hasEmbed, tc.wantHasEmbed)
+			}
+		})
+	}
+}
