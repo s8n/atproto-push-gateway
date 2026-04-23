@@ -56,8 +56,8 @@ func TestFormatUnknownReason(t *testing.T) {
 	if title != "Notification" {
 		t.Errorf("title for unknown reason = %q, want %q", title, "Notification")
 	}
-	if body != "​" {
-		t.Errorf("body for unknown reason = %q, want ZWSP", body)
+	if body != "" {
+		t.Errorf("body for unknown reason = %q, want empty string", body)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestFormatBodyEnrichesReplyMentionQuote(t *testing.T) {
 	}
 }
 
-func TestFormatBodyEmptyTextFallsToZWSP(t *testing.T) {
+func TestFormatBodyEmptyTextFallsToEmpty(t *testing.T) {
 	cases := []struct {
 		name, reason string
 		hasEmbed     bool
@@ -97,14 +97,14 @@ func TestFormatBodyEmptyTextFallsToZWSP(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, body := Format(tc.reason, "Alice", "alice.bsky.social", "", tc.hasEmbed, 0)
-			if body != "​" {
-				t.Errorf("body = %q, want ZWSP", body)
+			if body != "" {
+				t.Errorf("body = %q, want empty string", body)
 			}
 		})
 	}
 }
 
-func TestFormatBodyNonEnrichedReasonsAlwaysZWSP(t *testing.T) {
+func TestFormatBodyNonEnrichedReasonsAlwaysEmpty(t *testing.T) {
 	cases := []struct {
 		name, reason string
 	}{
@@ -116,8 +116,8 @@ func TestFormatBodyNonEnrichedReasonsAlwaysZWSP(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Even with postText provided, these reasons must not enrich.
 			_, body := Format(tc.reason, "Alice", "alice.bsky.social", "ignored", true, 0)
-			if body != "​" {
-				t.Errorf("body = %q, want ZWSP", body)
+			if body != "" {
+				t.Errorf("body = %q, want empty string", body)
 			}
 		})
 	}
@@ -198,12 +198,12 @@ func TestFormatUTF8BoundaryRespected(t *testing.T) {
 	}
 }
 
-func TestFormatAvailableZeroReturnsZWSP(t *testing.T) {
-	// Give Format an impossibly large baseOverhead. Body must fall to ZWSP
+func TestFormatAvailableZeroReturnsEmpty(t *testing.T) {
+	// Give Format an impossibly large baseOverhead. Body must fall to empty
 	// rather than overflow or panic.
 	_, body := Format("reply", "Alice", "alice.bsky.social", "hello", false, 999999)
-	if body != "​" {
-		t.Errorf("body under zero-budget should be ZWSP, got %q", body)
+	if body != "" {
+		t.Errorf("body under zero-budget should be empty, got %q", body)
 	}
 }
 

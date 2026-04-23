@@ -124,11 +124,18 @@ func (a *APNsSender) Send(n Notification) error {
 		return err
 	}
 
+	// iOS suppresses the notification alert when body is empty. Substitute
+	// a zero-width space so the title still renders.
+	alertBody := n.Body
+	if alertBody == "" {
+		alertBody = zwsp
+	}
+
 	payload := apnsPayload{
 		APS: apnsAPS{
 			Alert: apnsAlert{
 				Title: n.Title,
-				Body:  n.Body,
+				Body:  alertBody,
 			},
 			Sound:          "default",
 			MutableContent: 1,

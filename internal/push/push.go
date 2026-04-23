@@ -16,6 +16,11 @@ import (
 // remove the token from persistent storage.
 var ErrTokenInvalid = errors.New("push token permanently invalid")
 
+// zwsp is the zero-width space substituted for an empty body on iOS so the
+// system still renders the alert (iOS suppresses the banner entirely when
+// body is empty). Android/FCM has no such quirk and keeps the empty body.
+const zwsp = "​"
+
 type Notification struct {
 	Token    string
 	Platform string
@@ -63,10 +68,14 @@ func (e *ExpoPushSender) Send(n Notification) error {
 	// Notification Service Extension (iOS) or background handler (Android)
 	// can override these with localized text using the data fields.
 	// mutableContent:true tells iOS to invoke the NSE before display.
+	alertBody := n.Body
+	if alertBody == "" && n.Platform == "ios" {
+		alertBody = zwsp
+	}
 	msg := expoMessage{
 		To:             n.Token,
 		Title:          n.Title,
-		Body:           n.Body,
+		Body:           alertBody,
 		Data:           n.Data,
 		Sound:          "default",
 		MutableContent: true,

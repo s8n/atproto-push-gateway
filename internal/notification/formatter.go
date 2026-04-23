@@ -18,7 +18,6 @@ const (
 
 	ellipsis    = "…"
 	embedMarker = " 🖼"
-	zwsp        = "​"
 )
 
 var titleTemplates = map[string]string{
@@ -40,10 +39,14 @@ var titleTemplates = map[string]string{
 // via json.Marshal of the throwaway push.Notification. Format computes
 // the title's own contribution internally and truncates the body so the
 // final marshaled payload stays within payloadBudget - safetyMargin.
+//
+// An empty body is returned as "". Platform-specific senders decide how
+// to handle an empty body on the wire (iOS needs a zero-width space to
+// render as title-only; Android accepts an empty string).
 func Format(reason, actorDisplayName, actorHandle, postText string, hasEmbed bool, baseOverhead int) (title, body string) {
 	title = renderTitle(reason, actorDisplayName, actorHandle)
 	if !isEnrichedReason(reason) || postText == "" {
-		return title, zwsp
+		return title, ""
 	}
 	available := payloadBudget - safetyMargin - baseOverhead - jsonEncodedLen(title)
 	body = renderBody(postText, hasEmbed, available)
@@ -94,7 +97,7 @@ func renderBody(postText string, hasEmbed bool, available int) string {
 		suffix += embedMarker
 	}
 	if jsonEncodedLen(suffix) >= available {
-		return zwsp
+		return ""
 	}
 
 	// Walk back until truncated text + suffix fits.
@@ -110,7 +113,7 @@ func renderBody(postText string, hasEmbed bool, available int) string {
 		}
 		cut--
 	}
-	return zwsp
+	return ""
 }
 
 // jsonEncodedLen returns the JSON-encoded byte length of s, excluding the
