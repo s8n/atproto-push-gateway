@@ -14,6 +14,7 @@ services:
       - DEV_MODE=false
       - FCM_SERVICE_ACCOUNT_PATH=${FCM_SERVICE_ACCOUNT_PATH}
       - REDIS_URL=redis://redis:6379/0
+      - POST_FETCH_TIMEOUT_SECONDS=${POST_FETCH_TIMEOUT_SECONDS:-5}
     depends_on:
       redis:
         condition: service_healthy

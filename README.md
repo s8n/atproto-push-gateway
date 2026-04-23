@@ -189,7 +189,7 @@ docker run -d \
 | `REDIS_URL` | `redis://redis:6379/0` | Redis connection URL for the post-text cache. Set empty to disable (likes/reposts use empty bodies). |
 | `REDIS_POST_TTL_SECONDS` | `86400` | Positive cache TTL (24 hours). |
 | `REDIS_POST_NEGATIVE_TTL_SECONDS` | `300` | Negative cache TTL for deleted/unknown posts (5 minutes). |
-| `POST_FETCH_TIMEOUT_SECONDS` | `2` | Per-fetch AppView timeout. |
+| `POST_FETCH_TIMEOUT_SECONDS` | `5` | Per-fetch AppView timeout. |
 
 ## Production Setup
 

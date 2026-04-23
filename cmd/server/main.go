@@ -201,7 +201,7 @@ func main() {
 	redisURL := getEnv("REDIS_URL", "redis://redis:6379/0")
 	positiveTTL := time.Duration(getEnvInt("REDIS_POST_TTL_SECONDS", 86400)) * time.Second
 	negativeTTL := time.Duration(getEnvInt("REDIS_POST_NEGATIVE_TTL_SECONDS", 300)) * time.Second
-	fetchTimeout := time.Duration(getEnvInt("POST_FETCH_TIMEOUT_SECONDS", 2)) * time.Second
+	fetchTimeout := time.Duration(getEnvInt("POST_FETCH_TIMEOUT_SECONDS", 5)) * time.Second
 
 	var postTextProvider posttext.PostTextProvider = posttext.NullProvider{}
 	if redisURL != "" {

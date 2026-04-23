@@ -633,7 +633,7 @@ func (c *Consumer) handleVerificationDelete(verifierDID string, rkey string) {
 // defaultFetchTimeout is used when Consumer.fetchTimeout is zero or negative.
 // Keeps a bogus zero-value from producing an immediately-expired context,
 // which would silently disable all subject-post enrichment.
-const defaultFetchTimeout = 2 * time.Second
+const defaultFetchTimeout = 5 * time.Second
 
 // fetchSubjectPost looks up the subject post's text and embed status via the
 // configured PostTextProvider. Returns ("", false) on miss or timeout —
