@@ -51,6 +51,31 @@ func TestFormatTitleActorFallback(t *testing.T) {
 	}
 }
 
+func TestFormatTitleTrimsActorWhitespace(t *testing.T) {
+	// Bluesky does not forbid leading/trailing whitespace in displayName
+	// (real example: did:plc:6ljix2gyn5vvbkiwtkezsij5 has displayName "Rune ").
+	// Without trimming, the template's own space produces double-space titles.
+	cases := []struct {
+		name, display, handle, wantTitle string
+	}{
+		{"trailing space in display", "Rune ", "runefar.bsky.social", "Rune liked your post"},
+		{"leading space in display", " Alice", "alice.bsky.social", "Alice liked your post"},
+		{"tab in display", "Alice\t", "alice.bsky.social", "Alice liked your post"},
+		{"nbsp in display", "Alice ", "alice.bsky.social", "Alice liked your post"},
+		{"newline in display", "Alice\n", "alice.bsky.social", "Alice liked your post"},
+		{"whitespace-only display falls back to handle", "   ", "alice.bsky.social", "alice.bsky.social liked your post"},
+		{"padded handle when no display", "", " alice.bsky.social ", "alice.bsky.social liked your post"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			title, _ := Format("like", tc.display, tc.handle, "", false, 0)
+			if title != tc.wantTitle {
+				t.Errorf("title = %q, want %q", title, tc.wantTitle)
+			}
+		})
+	}
+}
+
 func TestFormatUnknownReason(t *testing.T) {
 	title, body := Format("never-heard-of-it", "Alice", "alice.bsky.social", "some text", true, 0)
 	if title != "Notification" {

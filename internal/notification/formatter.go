@@ -5,6 +5,7 @@ package notification
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -61,9 +62,12 @@ func renderTitle(reason, actorDisplayName, actorHandle string) string {
 	if reason == "verified" || reason == "unverified" {
 		return tmpl
 	}
-	actor := actorDisplayName
+	// TrimSpace: Bluesky permits leading/trailing whitespace in displayName,
+	// and templates already include a space after %s — untrimmed input yields
+	// double-spaced titles like "Rune  liked your post".
+	actor := strings.TrimSpace(actorDisplayName)
 	if actor == "" {
-		actor = actorHandle
+		actor = strings.TrimSpace(actorHandle)
 	}
 	if actor == "" {
 		actor = "Someone"
