@@ -328,19 +328,21 @@ func (f *fakePostTextProvider) PostText(ctx context.Context, uri string) (string
 }
 
 func TestHandleLikeCallsPostTextProvider(t *testing.T) {
-	// Build a minimal Consumer — we only need the postText field plus store,
-	// and we only exercise the code path up to sendNotification. sendNotification
-	// short-circuits when IsRegistered(targetDID) is false, which is the default
-	// for an empty store.
+	// handleLike must consult the PostText provider when a registered user
+	// is the post author (the potential notification target).
 	fake := &fakePostTextProvider{text: "hello", hasEmbed: false, ok: true}
 	tmpStore, err := store.New(":memory:")
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
 	defer tmpStore.Close()
+	if err := tmpStore.RegisterToken("did:plc:target", "ios", "ExponentPushToken[t1]", "org.example"); err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
 
 	c := &Consumer{
 		store:        tmpStore,
+		sender:       &captureSender{},
 		postText:     fake,
 		fetchTimeout: 1 * time.Second,
 	}
@@ -368,9 +370,13 @@ func TestHandleRepostCallsPostTextProvider(t *testing.T) {
 		t.Fatalf("store.New: %v", err)
 	}
 	defer tmpStore.Close()
+	if err := tmpStore.RegisterToken("did:plc:target", "ios", "ExponentPushToken[t1]", "org.example"); err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
 
 	c := &Consumer{
 		store:        tmpStore,
+		sender:       &captureSender{},
 		postText:     fake,
 		fetchTimeout: 1 * time.Second,
 	}
@@ -398,9 +404,16 @@ func TestHandleLikeWithViaFieldCallsProviderOnce(t *testing.T) {
 		t.Fatalf("store.New: %v", err)
 	}
 	defer tmpStore.Close()
+	if err := tmpStore.RegisterToken("did:plc:target", "ios", "ExponentPushToken[t1]", "org.example"); err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
+	if err := tmpStore.RegisterToken("did:plc:reposter", "ios", "ExponentPushToken[t2]", "org.example"); err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
 
 	c := &Consumer{
 		store:        tmpStore,
+		sender:       &captureSender{},
 		postText:     fake,
 		fetchTimeout: 1 * time.Second,
 	}
@@ -416,6 +429,67 @@ func TestHandleLikeWithViaFieldCallsProviderOnce(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.calls) != 1 {
 		t.Errorf("like-via-repost called provider %d times, want 1", len(fake.calls))
+	}
+}
+
+func TestHandleLikeSkipsFetchWhenNoRecipientRegistered(t *testing.T) {
+	// The firehose carries every like on the network. When neither the
+	// post author nor the reposter (for like-via-repost) is registered,
+	// handleLike must not call the PostText provider at all — otherwise
+	// we pound the AppView for notifications we'll never send.
+	fake := &fakePostTextProvider{text: "x", ok: true}
+	tmpStore, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer tmpStore.Close()
+
+	c := &Consumer{
+		store:        tmpStore,
+		sender:       &captureSender{},
+		postText:     fake,
+		fetchTimeout: 1 * time.Second,
+	}
+
+	rawLike := json.RawMessage(`{
+		"$type": "app.bsky.feed.like",
+		"subject": {"uri": "at://did:plc:target/app.bsky.feed.post/xyz", "cid": "bafy"},
+		"via": {"uri": "at://did:plc:reposter/app.bsky.feed.repost/rp1", "cid": "bafy2"}
+	}`)
+	c.handleLike("did:plc:actor", "rk1", rawLike)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.calls) != 0 {
+		t.Errorf("provider was called %d times for unregistered recipients, want 0", len(fake.calls))
+	}
+}
+
+func TestHandleRepostSkipsFetchWhenNoRecipientRegistered(t *testing.T) {
+	fake := &fakePostTextProvider{text: "x", ok: true}
+	tmpStore, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer tmpStore.Close()
+
+	c := &Consumer{
+		store:        tmpStore,
+		sender:       &captureSender{},
+		postText:     fake,
+		fetchTimeout: 1 * time.Second,
+	}
+
+	rawRepost := json.RawMessage(`{
+		"$type": "app.bsky.feed.repost",
+		"subject": {"uri": "at://did:plc:target/app.bsky.feed.post/xyz", "cid": "bafy"}
+	}`)
+	c.handleRepost("did:plc:actor", "rk1", rawRepost)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.calls) != 0 {
+		t.Errorf("provider was called %d times for unregistered recipient, want 0", len(fake.calls))
 	}
 }
 
@@ -447,9 +521,13 @@ func TestHandleLikeZeroFetchTimeoutUsesDefault(t *testing.T) {
 		t.Fatalf("store.New: %v", err)
 	}
 	defer tmpStore.Close()
+	if err := tmpStore.RegisterToken("did:plc:target", "ios", "ExponentPushToken[t1]", "org.example"); err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
 
 	c := &Consumer{
 		store:        tmpStore,
+		sender:       &captureSender{},
 		postText:     prov,
 		fetchTimeout: 0, // the case we're defending against
 	}

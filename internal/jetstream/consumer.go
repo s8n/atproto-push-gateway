@@ -466,17 +466,27 @@ func (c *Consumer) handleLike(actorDID string, rkey string, record json.RawMessa
 		return
 	}
 
+	// The firehose carries every like on the network. Skip the AppView
+	// fetch unless at least one potential recipient (the post author or,
+	// for like-via-repost, the reposter) is registered with this gateway.
+	reposterDID := ""
+	if like.Via != nil {
+		reposterDID = extractDIDFromURI(like.Via.URI)
+	}
+	targetReg := c.store.IsRegistered(targetDID)
+	reposterReg := reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID &&
+		c.store.IsRegistered(reposterDID)
+	if !targetReg && !reposterReg {
+		return
+	}
+
 	postText, hasEmbed := c.fetchSubjectPost(like.Subject.URI)
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.like/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI, postText, hasEmbed)
-
-	// like-via-repost: notify the reposter if discovered via their repost.
-	// Same subject post, so reuse the already-fetched text.
-	if like.Via != nil {
-		reposterDID := extractDIDFromURI(like.Via.URI)
-		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI, postText, hasEmbed)
-		}
+	if targetReg {
+		c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI, postText, hasEmbed)
+	}
+	if reposterReg {
+		c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI, postText, hasEmbed)
 	}
 }
 
@@ -491,17 +501,26 @@ func (c *Consumer) handleRepost(actorDID string, rkey string, record json.RawMes
 		return
 	}
 
+	// See handleLike: skip the AppView fetch unless at least one
+	// potential recipient is registered with this gateway.
+	reposterDID := ""
+	if repost.Via != nil {
+		reposterDID = extractDIDFromURI(repost.Via.URI)
+	}
+	targetReg := c.store.IsRegistered(targetDID)
+	reposterReg := reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID &&
+		c.store.IsRegistered(reposterDID)
+	if !targetReg && !reposterReg {
+		return
+	}
+
 	postText, hasEmbed := c.fetchSubjectPost(repost.Subject.URI)
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.repost/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI, postText, hasEmbed)
-
-	// repost-via-repost: notify the original reposter.
-	// Same subject post, so reuse the already-fetched text.
-	if repost.Via != nil {
-		reposterDID := extractDIDFromURI(repost.Via.URI)
-		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI, postText, hasEmbed)
-		}
+	if targetReg {
+		c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI, postText, hasEmbed)
+	}
+	if reposterReg {
+		c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI, postText, hasEmbed)
 	}
 }
 
